@@ -1,0 +1,193 @@
+#include "stm32f4xx_hal.h"
+
+#define INPUT_PIN      GPIO_PIN_0
+#define INPUT_PORT     GPIOA
+#define OUTPUT_PIN     GPIO_PIN_1
+#define OUTPUT_PORT    GPIOA
+#define PWM_TIMER      TIM2
+#define ADC_INSTANCE   ADC1
+#define ADC_CHANNEL    ADC_CHANNEL_0
+
+ADC_HandleTypeDef hadc;
+TIM_HandleTypeDef htim;
+
+float weights[] = {0.2f, 0.3f, 0.4f}; // Perceptron weights
+float bias = 0.5f; // Perceptron bias
+
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+void init_ADC(void)
+{
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  hadc.Instance = ADC_INSTANCE;
+  hadc.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc.Init.ScanConvMode = DISABLE;
+  hadc.Init.ContinuousConvMode = DISABLE;
+  hadc.Init.DiscontinuousConvMode = DISABLE;
+  hadc.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc.Init.NbrOfConversion = 1;
+
+  if (HAL_ADC_Init(&hadc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  sConfig.Channel = ADC_CHANNEL;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+
+  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+void init_PWM(void)
+{
+  TIM_OC_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  htim.Instance = PWM_TIMER;
+  htim.Init.Prescaler = 0;
+  htim.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim.Init.Period = 1000; // Adjust this value for desired PWM frequency
+
+  if (HAL_TIM_PWM_Init(&htim) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  sConfig.OCMode = TIM_OCMODE_PWM1;
+  sConfig.Pulse = 0;
+  sConfig.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfig.OCFastMode = TIM_OCFAST_DISABLE;
+
+  if (HAL_TIM_PWM_ConfigChannel(&htim, &sConfig, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+void init_GPIO(void)
+{
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  GPIO_InitStruct.Pin = INPUT_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+
+  HAL_GPIO_Init(INPUT_PORT, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = OUTPUT_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
+
+  HAL_GPIO_Init(OUTPUT_PORT, &GPIO_InitStruct);
+}
+
+float perceptron(float* inputs, float* weights, float bias, uint8_t numInputs)
+{
+  float sum = 0.0f;
+
+  for (uint8_t i = 0; i < numInputs; i++)
+  {
+    sum += inputs[i] * weights[i];
+  }
+
+  return sum + bias;
+}
+
+int main(void)
+{
+  HAL_Init();
+  SystemClock_Config();
+
+  init_GPIO();
+  init_ADC();
+  init_PWM();
+
+  while (1)
+  {
+    HAL_ADC_Start(&hadc);
+    if (HAL_ADC_PollForConversion(&hadc, 100) == HAL_OK)
+    {
+      uint16_t adcValue = HAL_ADC_GetValue(&hadc);
+
+      // Perform perceptron computation
+      float input = (float)adcValue / 4095.0f; // Normalize input to range [0, 1]
+
+      float inputs[] = {input}; // Single input for this example
+      float output = perceptron(inputs, weights, bias, 1);
+
+      uint16_t outputValue = (uint16_t)(output * 1000); // Scale output to PWM range
+
+      __HAL_TIM_SET_COMPARE(&htim, TIM_CHANNEL_1, outputValue);
+    }
+    HAL_ADC_Stop(&hadc);
+  }
+}
+
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE2);
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 16;
+  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+void Error_Handler(void)
+{
+  while (1)
+  {
+    // Error occurred, handle it as desired
+  }
+}

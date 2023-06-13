@@ -1,0 +1,11 @@
+../Drivers/CMSIS/Include/core_cm4.h:1816:22:__NVIC_SetPriority	2
+../Drivers/CMSIS/Include/core_cm4.h:2022:26:SysTick_Config	2
+../Core/Src/main.c:15:10:activation	1
+../Core/Src/main.c:20:10:perceptron	2
+../Core/Src/main.c:35:6:delay_ms	6
+../Core/Src/main.c:48:6:ADC_Init	1
+../Core/Src/main.c:65:10:ADC_Read	2
+../Core/Src/main.c:76:6:PWM_Init	1
+../Core/Src/main.c:94:6:PWM_SetDutyCycle	1
+../Core/Src/main.c:98:6:SystemInit	4
+../Core/Src/main.c:120:5:main	3

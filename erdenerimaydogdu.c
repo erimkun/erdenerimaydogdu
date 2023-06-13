@@ -1,0 +1,139 @@
+#include "stm32f4xx.h"
+
+
+#define NUM_INPUTS 1
+#define NUM_WEIGHTS (NUM_INPUTS + 1)
+
+// Perceptron
+float weights[NUM_WEIGHTS] = {0.5f, -0.5f};
+float bias = 0.1f;
+
+// ADC 0lama yeri
+uint16_t adc_value = 0;
+
+// weightse göre ayarlama
+uint32_t activation(float x) {
+    return (x >= 0.0f) ? 1 : 0;
+}
+
+// perceptronda toplama
+uint32_t perceptron(float inputs[]) {
+    float sum = 0.0f;
+
+
+    for (int i = 0; i < NUM_WEIGHTS - 1; i++) {
+        sum += inputs[i] * weights[i];
+    }
+
+
+    sum += bias;
+
+
+    return activation(sum);
+}
+
+void delay_ms(uint32_t milliseconds) {
+    uint32_t start = SysTick->VAL;
+    uint32_t target = start - milliseconds * (SystemCoreClock / 1000 / 8);
+
+    if (start < target) {
+        while (SysTick->VAL >= start && SysTick->VAL < target)
+            ;
+    } else {
+        while (SysTick->VAL >= start || SysTick->VAL < target)
+            ;
+    }
+}
+// adc yi zamanlaması
+void ADC_Init(void) {
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
+
+    GPIOA->MODER |= GPIO_MODER_MODER0;
+    GPIOA->PUPDR &= ~GPIO_PUPDR_PUPDR0;
+
+    ADC1->CR1 = 0;
+    ADC1->CR2 = 0;
+    ADC1->SQR3 = 0;
+
+    ADC1->CR2 |= ADC_CR2_ADON;
+    delay_ms(1);
+
+    ADC1->SMPR2 |= ADC_SMPR2_SMP0_0 | ADC_SMPR2_SMP0_1; // 56 döngü olcak öyle seçebiliriz configurasyondan istersek 8 12 seçenekleri de var
+}
+
+
+uint16_t ADC_Read(void) {
+    ADC1->SQR3 = 0;
+    ADC1->SQR3 |= 0;
+
+    ADC1->CR2 |= ADC_CR2_SWSTART;
+    while (!(ADC1->SR & ADC_SR_EOC))
+        ;
+
+    return ADC1->DR;
+}
+//adcye göre pwm leri ayarlamak içn döngüsünü
+void PWM_Init(void) {
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+
+    GPIOA->MODER |= GPIO_MODER_MODER5_1;
+    GPIOA->AFR[0] |= 0x00100000; // system configuredan da ayarlanabilirdi
+
+    TIM2->PSC = SystemCoreClock / 10000 - 1;
+    TIM2->ARR = 1000; // periyot süresi
+
+    TIM2->CCMR1 |= TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_2; // PWM modunu bire ayarlıyoruz
+    TIM2->CCMR1 |= TIM_CCMR1_OC1PE;
+
+    TIM2->CCER |= TIM_CCER_CC1E;
+
+    TIM2->CR1 |= TIM_CR1_CEN;
+}
+
+void PWM_SetDutyCycle(uint32_t duty_cycle) {
+    TIM2->CCR1 = duty_cycle;
+}
+// system32fxxden sildiğmiz dosyayı maine taşıyoruz zamanı defaulttan adc  system zamanını da bönce başlatmamız lazım başlangıçtan beri çalışcağı için hata vermesin diye
+void SystemInit(void) {
+    SCB->VTOR = FLASH_BASE | 0x00;
+    RCC->CR |= RCC_CR_HSEON;
+    while (!(RCC->CR & RCC_CR_HSERDY))
+        ;
+    RCC->CR |= RCC_CR_CSSON;
+    RCC->PLLCFGR = (8 << RCC_PLLCFGR_PLLM_Pos) |
+                   (336 << RCC_PLLCFGR_PLLN_Pos) |
+                   (4 << RCC_PLLCFGR_PLLP_Pos) |
+                   RCC_PLLCFGR_PLLSRC_HSE;
+    RCC->CR |= RCC_CR_PLLON;
+    while (!(RCC->CR & RCC_CR_PLLRDY))
+        ;
+    FLASH->ACR |= FLASH_ACR_LATENCY_5WS;
+    RCC->CFGR |= RCC_CFGR_HPRE_DIV1 | RCC_CFGR_PPRE1_DIV2 |
+                 RCC_CFGR_PPRE2_DIV1 | RCC_CFGR_SW_PLL;
+    while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_PLL)
+        ;
+    SystemCoreClockUpdate();
+    SysTick_Config(SystemCoreClock / 1000);
+}
+// zatenönce system zamanı sonra onla birlikte adc sonra perceptron oluşcak onu output atıycaz
+int main(void) {
+    SystemInit();
+    ADC_Init();
+    PWM_Init();
+
+    while (1) {
+        adc_value = ADC_Read();
+
+        // adc değerini 01 arasına
+        float input = adc_value / 4095.0f;
+
+        // perceptron aktif pwm oluşcak
+        uint32_t output = perceptron(&input);
+        PWM_SetDutyCycle(output ? 1000 : 0);
+
+        delay_ms(10); // gecikme veriyoruz  cyle sonunda
+    }
+}
+
